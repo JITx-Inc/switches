@@ -1,0 +1,153 @@
+#use-added-syntax(jitx)
+defpackage switches/DIP-sw:
+  import core
+  import jitx
+  import jitx/commands
+
+  import jsl/errors
+  import jsl/ensure
+  import jsl/symbols
+  import jsl/landpatterns
+  import jsl/design/settings
+
+pcb-enum switches/DIP219-Height-Code:
+  DIP219-Extended ; Extended Height Actuator - 0.6mm
+  DIP219-Medium ; Medium height Actuator - 0.25mm
+  DIP219-LowProfile ; Low Profile (Flush)
+
+defn get-part-number (num-sw:Int, act-height:DIP219-Height-Code, top-seal:True|False):
+  if num-sw < 2 or num-sw > 12:
+    throw $ ArgumentError("Invalid Number of Switches - 2 <= %_ <= 12" % [num-sw])
+
+  if act-height == DIP219-Extended and top-seal:
+    throw $ ArgumentError("Unavailable Device Configuration: Top Seal not available on Extended Actuator")
+
+  val code = switch(act-height):
+    DIP219-Extended: "E"
+    DIP219-Medium: "M"
+    DIP219-LowProfile: "LP"
+
+  val ts = "T" when top-seal else ""
+  to-string $ "219-%_%_S%_" % [num-sw, code, ts]
+
+
+public pcb-component device (num-sw:Int, act-height:DIP219-Height-Code = DIP219-LowProfile, top-seal:True|False = true):
+  manufacturer = "CTS Electrocomponents"
+  mpn = get-part-number(num-sw, act-height, top-seal)
+  description = to-string $ "DIP Switch, %_ Positions, 20V @ 0.1A" % [num-sw]
+  datasheet = "https://www.ctscorp.com/Files/DataSheets/Switches/DIP-Switches/CTS-Switches-DIP-219-Series-Datasheet.pdf"
+
+  ; I'm setting this up as column major - Example Pads for 4 sw version
+  ;
+  ;   1      5
+  ;   2      6
+  ;   3      7
+  ;   4      8
+  pin-properties :
+    [ pin : Ref | pads : Int ... | side:Dir | bank:Int]
+    for i in 1 through num-sw do:
+      [ p[i]            | i           | Left  | i ]
+      [ p[i + num-sw]   | i + num-sw  | Right | i ]
+
+  property(self.num-sw) = num-sw
+
+  assign-symbols(
+    for i in 1 through num-sw seq:
+      val symb-gen = ToggleSPSTSymbol(pin-refs = [#R(p[i]), #R(p[i + num-sw])])
+      val symb = create-symbol(symb-gen)
+      i => symb
+  )
+
+  val pkg = DIPSw-Pkg(num-sw)
+  assign-landpattern $ create-landpattern(pkg)
+
+
+
+public defstruct DIPSw-Pkg <: Package :
+  num-sw:Int with:
+    ensure => ensure-positive!
+  num-leads:Int with:
+    ensure => ensure-positive!
+    as-method => true
+  package-body:PackageBody with:
+    as-method => true
+  pad-planner:PadPlanner with:
+    as-method => true
+  lead-numbering:Numbering with:
+    as-method => true
+  density-level:DensityLevel with:
+    as-method => true
+    default => DENSITY-LEVEL
+with:
+  constructor => #DIPSw-Pkg
+  keyword-constructor => true
+  printer => true
+
+
+public defn DIPSw-Pkg (
+  num-sw:Int
+  pad-planner:PadPlanner = RectanglePadPlanner
+  lead-numbering:Numbering = Column-Major-Numbering(2 * num-sw, 2),
+  density-level:DensityLevel = DENSITY-LEVEL
+  ) -> DIPSw-Pkg:
+
+  ; Length in mm (Y)
+  defn to-length (num-sw:Int) -> Toleranced:
+    val in-per-sw = 0.258 / 2.0
+    val len-in = to-double(num-sw) * in-per-sw
+    (25.4 * len-in) +/- 0.3
+
+  DIPSw-Pkg(
+    num-sw = num-sw,
+    num-leads = 2 * num-sw,
+    package-body = PackageBody(
+      width = 6.7 +/- 0.25
+      length = to-length(num-sw),
+      height = 3.8 +/- [0.05, 0.10]
+    ),
+    pad-planner = pad-planner,
+    lead-numbering = lead-numbering
+    density-level = density-level
+  )
+
+public defmethod name (pkg:DIPSw-Pkg) -> String :
+  to-string $ "DIP-%_" % [num-sw(pkg)]
+
+public defmethod courtyard-excess (pkg:DIPSw-Pkg) -> Double :
+  0.25
+
+public defmethod build-silkscreen (
+  pkg:DIPSw-Pkg,
+  vp:VirtualLP,
+  ) -> False :
+
+  val eo = EdgesOutline(
+    pkg-body = package-body(pkg),
+    density-level = density-level(pkg)
+  )
+  build-outline(eo, vp)
+
+  build-smd-pin-1-dot(vp, dir = Left)
+  add-reference-designator(vp)
+
+public defmethod build-pads (
+  pkg:DIPSw-Pkg,
+  root:VirtualLP
+  ) :
+
+  val pad-W = 2.44
+  val pad-H = 1.13
+  val H-pitch = 8.6
+  val V-pitch = 2.54
+
+  val pad-seq = to-tuple $ pad-grid-smt(
+    pad-size = Dims(pad-W, pad-H)
+    planner = pad-planner(pkg),
+    lead-grid = GridPlanner(
+      pitch = Dims(H-pitch, V-pitch),
+      columns = 2
+      rows = num-sw(pkg),
+    )
+    num-scheme = lead-numbering(pkg)
+  )
+  append-all(root, pad-seq)

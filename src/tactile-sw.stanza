@@ -1,0 +1,92 @@
+#use-added-syntax(jitx)
+defpackage switches/tactile-sw:
+  import core
+  import jitx
+  import jitx/commands
+
+  import jsl/symbols
+  import jsl/landpatterns
+  import jsl/design/settings
+
+
+public pcb-component device :
+  description = "Tactile Switch, Momentary"
+  manufacturer = "C&K"
+  mpn = "PTS 647 SN50 SMTR2 LFS"
+  datasheet = "https://www.ckswitches.com/media/2567/pts647.pdf"
+  reference-prefix = "S"
+
+  pin-properties:
+    [pin:Ref | pads:Int ... ]
+    [p[1]    | 1, 2 ]
+    [p[2]    | 3, 4 ]
+
+  val symb = MomentarySPSTSymbol()
+  assign-symbol $ create-symbol(symb)
+
+  val pkg = TactileSw-Pkg()
+  assign-landpattern $ create-landpattern(pkg)
+
+
+public defstruct TactileSw-Pkg <: Package :
+  num-leads:Int with:
+    as-method => true
+    default => 4
+  package-body:PackageBody with:
+    as-method => true
+    default => PackageBody(
+      width = typ(4.5)
+      length = typ(4.5)
+      height = typ(5.0)
+    )
+  density-level:DensityLevel with:
+    as-method => true
+    default => DENSITY-LEVEL
+with:
+  printer => true
+  keyword-constructor => true
+
+public defmethod name (pkg:TactileSw-Pkg) -> String :
+  "Tactile Switch SMT"
+
+public defmethod courtyard-excess (
+  pkg:TactileSw-Pkg
+) -> Double :
+  0.25
+
+public defmethod build-silkscreen (
+  pkg:TactileSw-Pkg
+  vp:VirtualLP
+  ) -> False:
+  val eo = EdgesOutline(
+    pkg-body = package-body(pkg),
+    density-level = density-level(pkg)
+  )
+  build-outline(eo, vp)
+
+  build-smd-pin-1-dot(vp, dir = Left)
+  add-reference-designator(vp)
+
+public defmethod build-pads (
+  pkg:TactileSw-Pkg,
+  root:VirtualLP
+  ) :
+
+  val pad-W = (6.8 - 3.7) / 2.0
+  val pad-H = (4.2 - 2.2) / 2.0
+  val H-pitch = 3.7 + pad-W
+  val V-pitch = 2.2 + pad-H
+
+  val pad-seq = to-tuple $ pad-grid-smt(
+    pad-size = Dims(pad-W, pad-H)
+    planner = RectanglePadPlanner,
+    lead-grid = GridPlanner(
+      pitch = Dims(H-pitch, V-pitch),
+      columns = 2
+      rows = 2,
+    )
+    num-scheme = Row-Major-Numbering(4, 2)
+  )
+
+
+  append-all(root, pad-seq)
